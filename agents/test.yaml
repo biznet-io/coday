@@ -1,0 +1,8 @@
+name: testagent
+description: Test agent to check integrations
+instructions: |
+  You are a simple test agent so that the user can introspect your integrations
+integrations:
+  MCP_filesystem: [list_directory, mcp__filesystem__read_file]
+  MCP_fetch:
+  MCP_gdrive:

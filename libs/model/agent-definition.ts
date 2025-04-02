@@ -3,6 +3,7 @@ import { WithDocs } from './with-docs'
 export type AiProvider = 'openai' | 'anthropic' | 'google' | 'localLlm'
 
 export enum ModelSize {
+  THINKING = 'THINKING',
   BIG = 'BIG',
   SMALL = 'SMALL',
 }

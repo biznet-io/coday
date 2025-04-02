@@ -9,6 +9,18 @@ import { ThreadMessage } from '../ai-thread/ai-thread.types'
 import { TextBlockParam } from '@anthropic-ai/sdk/resources/messages'
 
 const AnthropicModels = {
+  [ModelSize.THINKING]: {
+    name: 'claude-3-7-sonnet-latest',
+    contextWindow: 200000,
+    price: {
+      inputMTokens: 3,
+      cacheWrite: 3.75,
+      cacheRead: 0.3,
+      outputMTokens: 15,
+    },
+    thinkingBudget: 4096,
+    max_tokens: 8192,
+  },
   [ModelSize.BIG]: {
     name: 'claude-3-7-sonnet-latest',
     contextWindow: 200000,
@@ -18,6 +30,8 @@ const AnthropicModels = {
       cacheRead: 0.3,
       outputMTokens: 15,
     },
+    thinkingBudget: null,
+    max_tokens: 8192,
   },
   [ModelSize.SMALL]: {
     name: 'claude-3-5-haiku-latest',
@@ -28,6 +42,8 @@ const AnthropicModels = {
       cacheRead: 0.08,
       outputMTokens: 4,
     },
+    thinkingBudget: null,
+    max_tokens: 8192,
   },
 }
 
@@ -80,12 +96,31 @@ export class AnthropicClient extends AiClient {
         ] as unknown as Array<TextBlockParam>,
         tools: this.getClaudeTools(agent.tools),
         temperature: agent.definition.temperature ?? 0.8,
-        max_tokens: 8192,
+        max_tokens: model.max_tokens,
+
+        // Enable extended thinking
+        // anthropic_beta: 'output-128k-2025-02-19', // Extended output capability
+        thinking: model.thinkingBudget
+          ? {
+              type: 'enabled',
+              budget_tokens: model.thinkingBudget,
+            }
+          : { type: 'disabled' },
       })
 
       this.updateUsage(response?.usage, agent, thread)
 
       if (response.stop_reason === 'max_tokens') throw new Error('Max tokens reached for Anthropic 😬')
+
+      // Extract thinking blocks for debug/logging
+      const thinkingBlocks = response.content
+        .filter((block) => block.type === 'thinking')
+        .map((block) => block.thinking)
+        .join('\n')
+
+      if (thinkingBlocks) {
+        this.handleText(thread, thinkingBlocks, agent, subscriber)
+      }
 
       const text = response.content
         .filter((block) => block.type === 'text')
