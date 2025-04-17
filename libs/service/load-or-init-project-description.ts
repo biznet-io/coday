@@ -40,6 +40,8 @@ export const loadOrInitProjectDescription = async (
           parametersDescription: 'Dummy description of parameters, refer to docs for proper use.',
         },
       },
+      // AI providers are intentionally not included in the default template
+      // Users can add them manually when needed
     }
     const yamlConfig = yaml.stringify(projectDescription)
     const projectConfigPath = path.join(projectPath, CONFIG_FILENAME_YAML)
