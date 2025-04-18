@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { ResourceTemplate, ToolInfo } from './types'
+import { ChildProcess, spawn } from 'child_process'
 
 export class McpToolsFactory extends AssistantToolFactory {
   /**
@@ -17,6 +18,13 @@ export class McpToolsFactory extends AssistantToolFactory {
    * @private
    */
   private toolsPromise: Promise<CodayTool[]> | undefined
+
+  /**
+   * Handle to the inspector process if debug mode is enabled
+   * @private
+   */
+  private inspectorProcess: ChildProcess | undefined
+
   name: string = 'Not defined yet'
 
   constructor(
@@ -31,6 +39,11 @@ export class McpToolsFactory extends AssistantToolFactory {
     this.tools = []
     console.log(`Closing mcp client ${this.serverConfig.name}`)
     await (await this.clientPromise)?.close()
+    if (this.inspectorProcess) {
+      console.log(`Stopping MCP Inspector process for ${this.serverConfig.name}`)
+      this.inspectorProcess.kill()
+      this.inspectorProcess = undefined
+    }
     console.log(`Closed mcp client ${this.serverConfig.name}`)
   }
 
@@ -80,34 +93,55 @@ export class McpToolsFactory extends AssistantToolFactory {
       throw new Error(`Remote HTTP/HTTPS MCP servers are not supported yet. Use local command-based servers instead.`)
     } else if (this.serverConfig.command) {
       // Stdio transport - launch the command as a child process
-      const transportOptions: any = {
-        command: this.serverConfig.command,
-        args: this.serverConfig.args || [],
-      }
+      const transportOptions: any = {}
 
-      // Add environment variables if specified
+      // Inspector process: only for debug mode, not used for tool integration
+      if (this.serverConfig.debug) {
+        // Start inspector process just for UI/debugging, not for tool integration
+        if (!this.inspectorProcess) {
+          const inspectorCommand = 'npx'
+          const inspectorArgs = [
+            '@modelcontextprotocol/inspector',
+            this.serverConfig.command,
+            ...(this.serverConfig.args || []),
+          ]
+          const inspectorOptions: any = {}
+          if (this.serverConfig.env && Object.keys(this.serverConfig.env).length > 0) {
+            inspectorOptions.env = { ...process.env, ...this.serverConfig.env }
+          }
+          if (this.serverConfig.cwd) {
+            inspectorOptions.cwd = this.serverConfig.cwd
+          }
+          console.log(`Starting MCP Inspector process for ${this.serverConfig.name}}`)
+          this.inspectorProcess = spawn(inspectorCommand, inspectorArgs, {
+            stdio: 'inherit',
+            ...inspectorOptions,
+          })
+          this.inspectorProcess.on('exit', (code, signal) => {
+            console.log(`MCP Inspector process for ${this.serverConfig.name} exited (code: ${code}, signal: ${signal})`)
+          })
+        }
+      }
+      // Main MCP transport for tools (never wrapped in inspector)
+      transportOptions.command = this.serverConfig.command
+      transportOptions.args = this.serverConfig.args || []
       if (this.serverConfig.env && Object.keys(this.serverConfig.env).length > 0) {
         transportOptions.env = this.serverConfig.env
         console.log(`Using custom environment variables for MCP server ${this.serverConfig.name}`)
       }
-
-      // Add working directory if specified
       if (this.serverConfig.cwd) {
         transportOptions.cwd = this.serverConfig.cwd
         console.log(`Using working directory: ${this.serverConfig.cwd}`)
       }
-
       transport = new StdioClientTransport(transportOptions)
-      console.log(`Starting MCP server ${this.serverConfig.name} with command: ${this.serverConfig.command}`)
+      console.log(`Starting MCP server ${this.serverConfig.name} with command: ${transportOptions.command}`)
     } else {
       throw new Error(
         `MCP server ${this.serverConfig.name} has no command configured. Only local command-based servers are supported.`
       )
     }
-
     // Connect to the server
     await instance.connect(transport)
-
     return instance
   }
 
