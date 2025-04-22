@@ -1,21 +1,30 @@
-import {Observable, Subject} from 'rxjs'
-import {CodayEvent, ErrorEvent, MessageEvent, ToolRequestEvent, ToolResponseEvent} from '../shared/coday-events'
-import {Agent} from './agent'
-import {AiThread} from '../ai-thread/ai-thread'
-import {RunStatus} from '../ai-thread/ai-thread.types'
-import {Interactor} from './interactor'
-import {ModelSize} from './agent-definition'
+import { Observable, Subject } from 'rxjs'
+import { CodayEvent, ErrorEvent, MessageEvent, ToolRequestEvent, ToolResponseEvent } from '../shared/coday-events'
+import { Agent } from './agent'
+import { AiThread } from '../ai-thread/ai-thread'
+import { RunStatus } from '../ai-thread/ai-thread.types'
+import { Interactor } from './interactor'
+import { AgentDefinition, ModelSize } from './agent-definition'
+import { AiModel, AiProviderConfig } from './ai-providers'
 
 /**
  * Common abstraction over different AI provider APIs.
  */
 export abstract class AiClient {
   abstract name: string
+  protected models: AiModel[] = []
   protected abstract interactor: Interactor
   protected killed: boolean = false
   protected defaultModelSize: ModelSize = ModelSize.BIG
   protected thinkingInterval: number = 3000
   protected charsPerToken: number = 3.5 // should be 4, some margin baked in to avoid overshoot on tool call
+
+  protected constructor(aiProviderConfig: AiProviderConfig) {
+    // merge the models in, ovewrite the models by aliases
+    const modelsByAliasOrName = new Map<string, AiModel>(this.models.map((m) => [m.alias ?? m.name, m]))
+    aiProviderConfig.models?.forEach((m) => modelsByAliasOrName.set(m.alias ?? m.name, m))
+    this.models = Array.from(modelsByAliasOrName.values())
+  }
 
   /**
    * Run the AI with the given configuration and thread context.
@@ -181,5 +190,14 @@ export abstract class AiClient {
 
   protected getModelSize(agent: Agent): ModelSize {
     return agent.definition.modelSize ?? this.defaultModelSize
+  }
+
+  protected getModel(agent: AgentDefinition): AiModel | undefined {
+    const aliasOrName = agent.modelName
+    const byAlias = this.models.find((m) => m.alias === aliasOrName)
+    if (byAlias) return byAlias
+
+    // default case, return the model that might correspond per model name, or undefined
+    return this.models.find((m) => m.name === aliasOrName)
   }
 }
