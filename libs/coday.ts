@@ -182,6 +182,7 @@ export class Coday {
         this.configHandler,
         this.services
       )
+      this.aiClientProvider.init(this.context)
       this.handlerLooper.init(this.context.project)
     }
   }

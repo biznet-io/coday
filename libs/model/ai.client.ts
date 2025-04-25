@@ -14,6 +14,7 @@ import { AiProviderConfig } from './ai-provider-config'
 export abstract class AiClient {
   abstract name: string
   protected models: AiModel[] = []
+  protected apiKey: string | undefined
   protected abstract interactor: Interactor
   protected killed: boolean = false
   protected defaultModelSize: ModelSize = ModelSize.BIG
@@ -25,6 +26,7 @@ export abstract class AiClient {
     const modelsByAliasOrName = new Map<string, AiModel>(this.models.map((m) => [m.alias ?? m.name, m]))
     aiProviderConfig.models?.forEach((m) => modelsByAliasOrName.set(m.alias ?? m.name, m))
     this.models = Array.from(modelsByAliasOrName.values())
+    this.apiKey = aiProviderConfig.apiKey
   }
 
   /**
