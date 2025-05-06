@@ -86,6 +86,8 @@ agents:
   #          ```
   - name: PM
     description: Product Manager agent, in charge of vision, roadmap, feature evaluation and priorisation
+    aiProvider: anthropic
+    modelName: BIG
     instructions: |
       You are a Product Manager AI agent focused on guiding product decisions for a lightweight, open-source LLM framework. Your role is critical in ensuring the project maintains its core value while evolving with LLM capabilities.
 

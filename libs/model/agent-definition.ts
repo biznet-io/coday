@@ -99,4 +99,5 @@ export const CodayAgentDefinition: AgentDefinition = {
 By following these guidelines, you will ensure that your responses are accurate, reliable, engaging, and trustworthy.
 `,
   modelSize: ModelSize.SMALL,
+  modelName: 'SMALL',
 }

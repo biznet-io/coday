@@ -8,33 +8,33 @@ import { AiThread } from '../ai-thread/ai-thread'
 import { ThreadMessage } from '../ai-thread/ai-thread.types'
 import { TextBlockParam } from '@anthropic-ai/sdk/resources/messages'
 
+const ANTHROPIC_DEFAULT_MODELS: AiModel[] = [
+  {
+    name: 'claude-3-7-sonnet-latest',
+    alias: 'BIG',
+    contextWindow: 200000,
+    price: {
+      inputMTokens: 3,
+      cacheWrite: 3.75,
+      cacheRead: 0.3,
+      outputMTokens: 15,
+    },
+  },
+  {
+    name: 'claude-3-5-haiku-latest',
+    alias: 'SMALL',
+    contextWindow: 200000,
+    price: {
+      inputMTokens: 0.8,
+      cacheWrite: 1,
+      cacheRead: 0.08,
+      outputMTokens: 4,
+    },
+  },
+]
+
 export class AnthropicClient extends AiClient {
   name: string
-
-  models: AiModel[] = [
-    {
-      name: 'claude-3-7-sonnet-latest',
-      alias: 'BIG',
-      contextWindow: 200000,
-      price: {
-        inputMTokens: 3,
-        cacheWrite: 3.75,
-        cacheRead: 0.3,
-        outputMTokens: 15,
-      },
-    },
-    {
-      name: 'claude-3-5-haiku-latest',
-      alias: 'SMALL',
-      contextWindow: 200000,
-      price: {
-        inputMTokens: 0.8,
-        cacheWrite: 1,
-        cacheRead: 0.08,
-        outputMTokens: 4,
-      },
-    },
-  ]
 
   constructor(
     readonly interactor: Interactor,
@@ -42,6 +42,8 @@ export class AnthropicClient extends AiClient {
   ) {
     super(aiProviderConfig)
     this.name = 'Anthropic'
+    this.mergeModels(ANTHROPIC_DEFAULT_MODELS)
+    console.log('🐼')
   }
 
   async run(agent: Agent, thread: AiThread): Promise<Observable<CodayEvent>> {

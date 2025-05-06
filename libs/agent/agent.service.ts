@@ -83,8 +83,10 @@ export class AgentService implements Killable {
       console.error('Failed to initialize agents:', error)
       throw error
     }
-
     await Promise.all(this.agentDefinitions.map((entry) => this.tryAddAgent(entry, context)))
+    console.log(`agents created: ${Array.from(this.agents.keys()).join(', ')}`)
+
+    // TODO: use this.agents instead, not all agent are created...
     const agentNames = this.listAgentSummaries().map((a) => `  - ${a.name} : ${a.description}`)
     if (agentNames.length > 1) {
       this.interactor.displayText(`Loaded agents (callable with '@[agent name]'):\n${agentNames.join('\n')}`)
@@ -263,7 +265,7 @@ export class AgentService implements Killable {
         console.error(`Cannot create agent ${def.name}: dependencies not set. Call setDependencies first.`)
         return
       }
-
+      console.log(`getting client for agent ${def.name}, ${def.aiProvider}, ${def.modelName}`)
       const aiClient = this.aiClientProvider.getClient(def.aiProvider, def.modelName)
       if (!aiClient) {
         this.interactor.error(`Cannot create agent ${def.name}: AI client creation failed`)
