@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import { Agent, AiClient, AiModel, AiProviderConfig, Interactor } from '../model'
 import { CodayEvent, ErrorEvent, MessageEvent, ToolRequestEvent, ToolResponseEvent } from '@coday/coday-events'
 import { AiThread } from '../ai-thread/ai-thread'
-import { Observable, of, Subject } from 'rxjs'
+import { Observable, Subject } from 'rxjs'
 import { ThreadMessage } from '../ai-thread/ai-thread.types'
 import { ChatCompletionMessageParam, ChatCompletionSystemMessageParam } from 'openai/resources/chat/completions'
 import { MessageCreateParams } from 'openai/resources/beta/threads/messages'
@@ -14,37 +14,39 @@ type AssistantThreadData = {
   lastTimestamp?: string
 }
 
+const OPENAI_DEFAULT_MODELS: AiModel[] = [
+  {
+    name: 'gpt-4.1-2025-04-14',
+    contextWindow: 1000000,
+    alias: 'BIG',
+    price: {
+      inputMTokens: 2,
+      cacheRead: 0.5,
+      outputMTokens: 8,
+    },
+  },
+  {
+    name: 'gpt-4o-mini',
+    alias: 'SMALL',
+    contextWindow: 128000,
+    price: {
+      inputMTokens: 0.15,
+      cacheRead: 0.075,
+      outputMTokens: 0.6,
+    },
+  },
+]
+
 export class OpenaiClient extends AiClient {
   name: string
-  models: AiModel[] = [
-    {
-      name: 'gpt-4.1-2025-04-14',
-      contextWindow: 1000000,
-      alias: 'BIG',
-      price: {
-        inputMTokens: 2,
-        cacheRead: 0.5,
-        outputMTokens: 8,
-      },
-    },
-    {
-      name: 'gpt-4o-mini',
-      alias: 'SMALL',
-      contextWindow: 128000,
-      price: {
-        inputMTokens: 0.15,
-        cacheRead: 0.075,
-        outputMTokens: 0.6,
-      },
-    },
-  ]
 
   constructor(
     readonly interactor: Interactor,
-    private aiProviderConfig: AiProviderConfig
+    aiProviderConfig: AiProviderConfig
   ) {
     super(aiProviderConfig)
-    if (aiProviderConfig.name !== 'openai') {
+    this.mergeModels(OPENAI_DEFAULT_MODELS)
+    if (aiProviderConfig.name.toLowerCase() !== 'openai') {
       this.models = aiProviderConfig.models ?? []
     }
     this.name = aiProviderConfig.name
@@ -52,27 +54,30 @@ export class OpenaiClient extends AiClient {
 
   async run(agent: Agent, thread: AiThread): Promise<Observable<CodayEvent>> {
     thread.resetUsageForRun()
-    if (agent.definition.openaiAssistantId) {
-      // then use the stateful assistant API
-      return this.runAssistant(agent, thread)
-    }
 
     const openai = this.isOpenaiReady()
-    if (!openai) return of()
+    if (!openai) return this.returnError('Client not ready')
+    const model = this.getModel(agent)
+    if (!model) return this.returnError(`Model not found for agent ${agent.name}`)
+
+    if (agent.definition.openaiAssistantId) {
+      // then use the stateful assistant API
+      return this.runAssistant(agent, model, thread)
+    }
 
     const outputSubject: Subject<CodayEvent> = new Subject()
     const thinking = setInterval(() => this.interactor.thinking(), this.thinkingInterval)
-    this.processThread(openai, agent, thread, outputSubject).finally(() => {
+    this.processThread(openai, agent, model, thread, outputSubject).finally(() => {
       clearInterval(thinking)
-      this.showAgentAndUsage(agent, this.aiProviderConfig.name, this.getModel(agent)!.name, thread)
+      this.showAgentAndUsage(agent, this.aiProviderConfig.name, model.name, thread)
       outputSubject.complete()
     })
     return outputSubject
   }
 
-  async runAssistant(agent: Agent, thread: AiThread): Promise<Observable<CodayEvent>> {
+  async runAssistant(agent: Agent, model: AiModel, thread: AiThread): Promise<Observable<CodayEvent>> {
     const openai = this.isOpenaiReady()
-    if (!openai) return of()
+    if (!openai) return this.returnError('Client not ready')
 
     const outputSubject: Subject<CodayEvent> = new Subject()
 
@@ -100,10 +105,10 @@ export class OpenaiClient extends AiClient {
     const messagesToUpload = messages.slice(lastMessageIndex + 1)
 
     this.updateAssistantThread(openai, thread, messagesToUpload)
-      .then(async () => await this.processAssistantThread(openai, agent, thread, outputSubject))
+      .then(async () => await this.processAssistantThread(openai, agent, model, thread, outputSubject))
       .finally(() => {
         clearInterval(thinking)
-        this.showAgentAndUsage(agent, this.aiProviderConfig.name, this.getModel(agent)!.name, thread)
+        this.showAgentAndUsage(agent, this.aiProviderConfig.name, model.name, thread)
         outputSubject.complete()
       })
     return outputSubject
@@ -112,6 +117,7 @@ export class OpenaiClient extends AiClient {
   protected async processAssistantThread(
     client: OpenAI,
     agent: Agent,
+    model: AiModel,
     thread: AiThread,
     subscriber: Subject<CodayEvent>
   ): Promise<void> {
@@ -124,17 +130,17 @@ export class OpenaiClient extends AiClient {
       parallel_tool_calls: false,
     })
 
-    await this.processAssistantStream(assistantStream, agent, client, thread, subscriber)
+    await this.processAssistantStream(assistantStream, agent, model, client, thread, subscriber)
   }
 
   private async processThread(
     client: OpenAI,
     agent: Agent,
+    model: AiModel,
     thread: AiThread,
     subscriber: Subject<CodayEvent>
   ): Promise<void> {
     try {
-      const model = this.getModel(agent)!
       const initialContextCharLength = agent.systemInstructions.length + agent.tools.charLength + 20
       const charBudget = model.contextWindow * this.charsPerToken - initialContextCharLength
 
@@ -146,7 +152,7 @@ export class OpenaiClient extends AiClient {
         temperature: agent.definition.temperature ?? 0.8,
       })
       2
-      this.updateUsage(response.usage, agent, thread)
+      this.updateUsage(response.usage, agent, model, thread)
 
       if (response.choices[0].finish_reason === 'length') throw new Error('Max tokens reached for Openai 😬')
 
@@ -164,15 +170,14 @@ export class OpenaiClient extends AiClient {
 
       if (await this.shouldProcessAgainAfterResponse(text, toolRequests, agent, thread)) {
         // then tool responses to send
-        await this.processThread(client, agent, thread, subscriber)
+        await this.processThread(client, agent, model, thread, subscriber)
       }
     } catch (error: any) {
       this.handleError(error, subscriber, this.aiProviderConfig.name)
     }
   }
 
-  private updateUsage(usage: any, agent: Agent, thread: AiThread): void {
-    const model = this.getModel(agent)!
+  private updateUsage(usage: any, agent: Agent, model: AiModel, thread: AiThread): void {
     const cacheReadTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0
     const inputNoCacheTokens = (usage?.prompt_tokens ?? 0) - cacheReadTokens // TODO: check again with doc...
     const input = inputNoCacheTokens * (model?.price?.inputMTokens ?? 0)
@@ -308,6 +313,7 @@ export class OpenaiClient extends AiClient {
   private async processAssistantStream(
     stream: AssistantStream,
     agent: Agent,
+    model: AiModel,
     client: OpenAI,
     thread: AiThread,
     subscriber: Subject<CodayEvent>
@@ -321,7 +327,7 @@ export class OpenaiClient extends AiClient {
         this.interactor.thinking()
         if (chunk.event === 'thread.run.completed') {
           const data = chunk.data as unknown as any
-          this.updateUsage(data?.usage, agent, thread)
+          this.updateUsage(data?.usage, agent, model, thread)
         }
 
         if (chunk.event === 'thread.run.requires_action') {
@@ -362,7 +368,7 @@ export class OpenaiClient extends AiClient {
               { tool_outputs: toolOutputs }
             )
             if (!this.shouldProceed(thread)) return
-            await this.processAssistantStream.call(this, newStream, agent, client, thread, subscriber)
+            await this.processAssistantStream.call(this, newStream, agent, model, client, thread, subscriber)
           } catch (error) {
             console.error(`Error processing tool call`, error)
             const errorMessage = error instanceof Error ? error.message : 'Unknown error'
