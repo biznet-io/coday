@@ -203,4 +203,8 @@ export abstract class AiClient {
     // default case, return the model that might correspond per model name, or undefined
     return this.models.find((m) => m.name === aliasOrName)
   }
+
+  supportsModel(name: string): boolean {
+    return this.models.some((model) => model.name === name || model.alias === name)
+  }
 }
