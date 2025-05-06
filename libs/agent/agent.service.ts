@@ -100,15 +100,13 @@ export class AgentService implements Killable {
   }
 
   async findAgentByNameStart(nameStart: string | undefined, context: CommandContext): Promise<Agent | undefined> {
-    const defaultAgentName = 'coday'
-
     // Initialize agents if not already done
     await this.initialize(context)
 
-    const matchingAgents = await this.findAgentsByNameStart(nameStart ?? defaultAgentName, context)
+    const matchingAgents = await this.findAgentsByNameStart(nameStart, context)
 
     if (matchingAgents.length === 0) {
-      return this.agents.get(defaultAgentName.toLowerCase())
+      return undefined
     }
 
     if (matchingAgents.length === 1) {
@@ -117,17 +115,11 @@ export class AgentService implements Killable {
 
     if (!context.oneshot) {
       const options = matchingAgents.map((agent) => agent.name)
-      try {
-        const selection = await this.interactor.chooseOption(
-          options,
-          `Multiple agents match '${nameStart}', please select one:`
-        )
-        const selectedAgent = matchingAgents.find((agent) => agent.name === selection)
-        return selectedAgent
-      } catch (error) {
-        this.interactor.error('Selection cancelled')
-        return undefined
-      }
+      const selection = await this.interactor.chooseOption(
+        options,
+        `Multiple agents match '${nameStart}', please select one:`
+      )
+      return matchingAgents.find((agent) => agent.name === selection)
     }
   }
 
@@ -140,15 +132,9 @@ export class AgentService implements Killable {
     await this.initialize(context)
 
     const lowerNameStart = nameStart.toLowerCase()
-    const matches: Agent[] = []
-
-    for (const name of Array.from(this.agents.keys())) {
-      if (name.toLowerCase().startsWith(lowerNameStart)) {
-        matches.push(this.agents.get(name)!)
-      }
-    }
-
-    return matches
+    return Array.from(this.agents.keys())
+      .filter((agentName) => agentName.toLowerCase().startsWith(lowerNameStart))
+      .map((agentName) => this.agents.get(agentName))
   }
 
   /**
