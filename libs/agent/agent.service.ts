@@ -143,7 +143,7 @@ export class AgentService implements Killable {
     const matches: Agent[] = []
 
     for (const name of Array.from(this.agents.keys())) {
-      if (name.startsWith(lowerNameStart)) {
+      if (name.toLowerCase().startsWith(lowerNameStart)) {
         matches.push(this.agents.get(name)!)
       }
     }
