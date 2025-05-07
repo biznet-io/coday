@@ -12,7 +12,7 @@ import { AiProviderConfig } from './ai-provider-config'
  */
 export abstract class AiClient {
   abstract name: string
-  protected models: AiModel[] = []
+  public models: AiModel[] = []
   protected apiKey: string | undefined
   protected abstract interactor: Interactor
   protected killed: boolean = false
