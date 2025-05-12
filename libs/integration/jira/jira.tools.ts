@@ -12,13 +12,13 @@ import { validateJqlOperators } from './jira.helpers'
 export class JiraTools extends AssistantToolFactory {
   name = 'JIRA'
   private jiraService: JiraService
+
   constructor(
     interactor: Interactor,
     private integrationService: IntegrationService
   ) {
     super(interactor)
     this.jiraService = new JiraService(interactor, integrationService)
-    console.log('constructor')
   }
 
   protected async buildTools(context: CommandContext, agentName: string): Promise<CodayTool[]> {
