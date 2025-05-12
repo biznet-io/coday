@@ -71,6 +71,10 @@ prompts:
     requiredIntegrations:
       - "GIT"
 
+ai:
+  - name: anthropic
+  - name: openai
+
 agents:
   - name: Coday
   # Example of an agent with partial integrations
