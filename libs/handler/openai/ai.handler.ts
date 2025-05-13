@@ -3,6 +3,7 @@ import { Agent, CommandContext, CommandHandler, Interactor, Killable } from '../
 import { lastValueFrom, Observable } from 'rxjs'
 import { CodayEvent, MessageEvent } from '../../shared/coday-events'
 import { AgentService } from '../../agent'
+import { parseAgentCommand } from './parseAgentCommand'
 
 export class AiHandler extends CommandHandler implements Killable {
   private lastAgentName: string | undefined
@@ -28,47 +29,24 @@ export class AiHandler extends CommandHandler implements Killable {
      *   - "@AgentName\nrest of command" => valid, use AgentName with "rest of command"
      */
 
-    // Extract the agent name using regex
-    // Format: @ followed by zero or more non-whitespace characters, optionally followed by whitespace and the rest
-    const match = command.match(/^@(\S*)(?:\s+(.*))?$/)
-
-    if (!match) {
-      // This case should rarely happen as the regex now matches almost any string starting with @
-      // But keeping it as a safety check
-      const agent = await this.agentService.findByName('coday', context)
-      if (!agent) {
-        this.interactor.error('Failed to initialize default agent')
-        return context
-      }
-      return this.runAgent(agent, command.slice(1).trim(), context) // Remove @ and pass the rest as command
-    }
-
-    const agentName = match[1] // First group: the agent name (could be empty)
-    const restOfCommand = match[2] || '' // Second group: the rest of the command (or empty string if not present)
+    // Extract the agent name and rest of command using the shared function
+    // This replaces the inline regex previously used
+    const [agentName, restOfCommand] = parseAgentCommand(command)
 
     // Try to select the specified agent
     // If agentName is empty, selectAgent will handle the fallback logic
-    const selectedAgent = await this.selectAgent(agentName, context)
+    const selectedAgent = await this.selectAgent(agentName?.toLowerCase(), context)
     if (!selectedAgent) {
-      // Agent name was provided but not found, show warning and use default
-      if (agentName) {
-        this.interactor.warn(`Agent '${agentName}' not found. Using default agent.`)
-      }
-      const defaultAgent = await this.agentService.findByName('coday', context)
-      if (!defaultAgent) {
-        this.interactor.error('Failed to initialize default agent')
-        return context
-      }
-      return this.runAgent(defaultAgent, restOfCommand, context)
+      this.interactor.error('Failed to initialize default agent')
     }
 
     // If no further command, just confirm selection
     if (!restOfCommand.trim()) {
-      this.interactor.displayText(`Agent ${selectedAgent.name} selected.`)
+      this.interactor.displayText(`Agent ${selectedAgent!.name} selected.`)
       return context
     }
 
-    return this.runAgent(selectedAgent, restOfCommand, context)
+    return this.runAgent(selectedAgent!, restOfCommand, context)
   }
 
   /**
@@ -101,6 +79,7 @@ export class AiHandler extends CommandHandler implements Killable {
         return agent
       }
       // If last agent no longer available, clear it
+      this.interactor.warn(`Last used agent ${this.lastAgentName} no longer available.`)
       this.lastAgentName = undefined
     }
 
@@ -109,6 +88,7 @@ export class AiHandler extends CommandHandler implements Killable {
     if (preferredAgent) {
       const agent = await this.agentService.findByName(preferredAgent, context)
       if (agent) {
+        this.interactor.displayText(`Selecting user default agent ${preferredAgent}`)
         this.lastAgentName = agent.name
         return agent
       }

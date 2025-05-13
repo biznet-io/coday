@@ -83,8 +83,10 @@ export class AgentService implements Killable {
       console.error('Failed to initialize agents:', error)
       throw error
     }
-
     await Promise.all(this.agentDefinitions.map((entry) => this.tryAddAgent(entry, context)))
+    console.log(`agents created: ${Array.from(this.agents.keys()).join(', ')}`)
+
+    // TODO: use this.agents instead, not all agent are created...
     const agentNames = this.listAgentSummaries().map((a) => `  - ${a.name} : ${a.description}`)
     if (agentNames.length > 1) {
       this.interactor.displayText(`Loaded agents (callable with '@[agent name]'):\n${agentNames.join('\n')}`)
@@ -100,15 +102,17 @@ export class AgentService implements Killable {
   }
 
   async findAgentByNameStart(nameStart: string | undefined, context: CommandContext): Promise<Agent | undefined> {
-    const defaultAgentName = 'coday'
+    if (!nameStart) {
+      return
+    }
 
     // Initialize agents if not already done
     await this.initialize(context)
 
-    const matchingAgents = await this.findAgentsByNameStart(nameStart ?? defaultAgentName, context)
+    const matchingAgents = await this.findAgentsByNameStart(nameStart, context)
 
     if (matchingAgents.length === 0) {
-      return this.agents.get(defaultAgentName.toLowerCase())
+      return undefined
     }
 
     if (matchingAgents.length === 1) {
@@ -117,17 +121,11 @@ export class AgentService implements Killable {
 
     if (!context.oneshot) {
       const options = matchingAgents.map((agent) => agent.name)
-      try {
-        const selection = await this.interactor.chooseOption(
-          options,
-          `Multiple agents match '${nameStart}', please select one:`
-        )
-        const selectedAgent = matchingAgents.find((agent) => agent.name === selection)
-        return selectedAgent
-      } catch (error) {
-        this.interactor.error('Selection cancelled')
-        return undefined
-      }
+      const selection = await this.interactor.chooseOption(
+        options,
+        `Multiple agents match '${nameStart}', please select one:`
+      )
+      return matchingAgents.find((agent) => agent.name === selection)
     }
   }
 
@@ -140,15 +138,10 @@ export class AgentService implements Killable {
     await this.initialize(context)
 
     const lowerNameStart = nameStart.toLowerCase()
-    const matches: Agent[] = []
-
-    for (const name of Array.from(this.agents.keys())) {
-      if (name.startsWith(lowerNameStart)) {
-        matches.push(this.agents.get(name)!)
-      }
-    }
-
-    return matches
+    return Array.from(this.agents.keys())
+      .filter((agentName) => agentName.toLowerCase().startsWith(lowerNameStart))
+      .map((agentName) => this.agents.get(agentName))
+      .filter((agent) => !!agent)
   }
 
   /**
@@ -272,18 +265,10 @@ export class AgentService implements Killable {
         console.error(`Cannot create agent ${def.name}: dependencies not set. Call setDependencies first.`)
         return
       }
-
-      const aiClient = this.aiClientProvider.getClient(def.aiProvider)
+      console.log(`getting client for agent ${def.name}, ${def.aiProvider}, ${def.modelName}`)
+      const aiClient = this.aiClientProvider.getClient(def.aiProvider, def.modelName)
       if (!aiClient) {
-        // Provide more specific error for localLlm
-        if (def.aiProvider === 'localLlm') {
-          this.interactor.warn(
-            `Cannot create agent ${def.name}: Local LLM configuration is missing or incomplete. ` +
-              `Please configure 'url' in your aiProviders section in ~/.coday/users/${this.services.user.sanitizedUsername}/user.yml or through 'config ai user'`
-          )
-        } else {
-          console.error(`Cannot create agent ${def.name}: AI client creation failed`)
-        }
+        this.interactor.error(`Cannot create agent ${def.name}: AI client creation failed`)
         return
       }
 
