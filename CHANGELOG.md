@@ -1,3 +1,18 @@
+## 0.7.0 (2025-05-14)
+
+### 🚀 Features
+
+- jira count tool and lazy laod the jiraFieldMappingDescription ([#9](https://github.com/biznet-io/coday/pull/9))
+
+### 🩹 Fixes
+
+- do not write silently the default coday.yaml file ([#73](https://github.com/biznet-io/coday/pull/73))
+
+### ❤️ Thank You
+
+- c-monot-whoz
+- vincent-audibert-whoz
+
 ## 0.6.1 (2025-05-14)
 
 ### 🚀 Features
