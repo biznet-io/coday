@@ -290,7 +290,8 @@ export class AgentService implements Killable {
       const basePath = entry.basePath
       const agentDocs = getFormattedDocs(def, this.interactor, basePath)
 
-      const instructions = `${def.instructions}\n\n
+      // overwrite agent instructions with the added project and user context
+      def.instructions = `${def.instructions}\n\n
 ## Project description
 ${context.project.description}
 
@@ -301,8 +302,6 @@ ${this.services.memory.getFormattedMemories(MemoryLevel.PROJECT, def.name)}
 ${agentDocs}
 
 `
-      // overwrite agent instructions with the added project and user context
-      def.instructions = instructions
 
       const integrations = def.integrations
         ? new Map<string, string[]>(
