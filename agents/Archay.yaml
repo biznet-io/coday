@@ -7,6 +7,7 @@ integrations:
   FILES:
   AI:
   MEMORY:
+  FETCH:
   GIT-PLATFORM:
   GIT:
   PROJECT_SCRIPTS:
