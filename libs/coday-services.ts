@@ -4,6 +4,7 @@ import { IntegrationService } from './service/integration.service'
 import { MemoryService } from './service/memory.service'
 import { AgentService } from './agent/agent.service'
 import { McpConfigService } from './service/mcp-config.service'
+import { AiConfigService } from './service/ai-config.service'
 
 export type CodayServices = {
   user: UserService
@@ -12,4 +13,5 @@ export type CodayServices = {
   memory: MemoryService
   mcp: McpConfigService
   agent?: AgentService
+  aiConfig?: AiConfigService
 }

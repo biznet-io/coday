@@ -1,0 +1,143 @@
+import { CommandContext, CommandHandler } from '../../model'
+import { Interactor } from '../../model/interactor'
+import { CodayServices } from '../../coday-services'
+import { ConfigLevel } from '../../model/config-level'
+import { AiModel } from '../../model/ai-model'
+import { parseAiModelHandlerArgs } from './parse-ai-model-handler-args'
+
+/**
+ * Handler for editing a single model of a provider config at a precise level (default user).
+ * Interactive, property-by-property editing.
+ */
+export class AiModelEditHandler extends CommandHandler {
+  constructor(
+    private interactor: Interactor,
+    private services: CodayServices
+  ) {
+    super({
+      commandWord: 'edit',
+      description: 'Edit a model of an AI provider configuration (default user level).',
+    })
+  }
+
+  async handle(command: string, context: CommandContext): Promise<CommandContext> {
+    if (!this.services.aiConfig) {
+      this.interactor.displayText('AI config service unavailable.')
+      return context
+    }
+
+    // Parse arguments after commandWord ("edit") using getSubCommand()
+    const args = this.getSubCommand(command)
+    let parsedArgs
+    try {
+      parsedArgs = parseAiModelHandlerArgs(args)
+    } catch (err: any) {
+      this.interactor.error(err.message)
+      return context
+    }
+    const isProject = parsedArgs.isProject
+    const level = isProject ? ConfigLevel.PROJECT : ConfigLevel.USER
+
+    // Step 1: Choose provider, use arg if present
+    const providers = this.services.aiConfig.getProviders(level)
+    if (!providers.length) {
+      this.interactor.displayText(`No AI providers found at ${level} level.`)
+      return context
+    }
+    const providerNames = providers.map((p) => p.name)
+    // Normalize for case-insensitive match
+    let providerNameInput = parsedArgs.aiProviderNameStart
+    let provider: (typeof providers)[0] | undefined
+    if (providerNameInput) {
+      provider = providers.find((p) => p.name.toLowerCase().startsWith(providerNameInput.toLowerCase()))
+    }
+    if (!provider) {
+      // If not matched, prompt interactively
+      const providerName = await this.interactor.chooseOption(
+        providerNames,
+        `Select provider to edit its model at ${level} level:`
+      )
+      if (!providerName) return context
+      provider = providers.find((p) => p.name === providerName)
+    }
+    if (!provider) {
+      this.interactor.error('Selected provider not found at this level.')
+      return context
+    }
+
+    // Step 2: Choose model, use arg if present (case-insensitive)
+    const models = provider.models || []
+    if (!models.length) {
+      this.interactor.displayText(`Provider '${provider.name}' has no models to edit.`)
+      return context
+    }
+    const modelNames = models.map((m) => m.name)
+    let modelNameInput = parsedArgs.aiModelName
+    let model: (typeof models)[0] | undefined
+    if (modelNameInput) {
+      model = models.find((m) => m.name.toLowerCase().startsWith(modelNameInput.toLowerCase()))
+    }
+    if (!model) {
+      // Prompt if not found or not provided
+      const modelName = await this.interactor.chooseOption(
+        modelNames,
+        `Select model to edit for provider '${provider.name}':`
+      )
+      if (!modelName) return context
+      model = models.find((m) => m.name === modelName)
+    }
+    if (!model) {
+      this.interactor.error('Selected model not found.')
+      return context
+    }
+
+    // Step 3: Edit properties
+    // Name
+    const newName = await this.interactor.promptText('Model name (unique, as per API):', model.name)
+    // Alias
+    const newAlias = await this.interactor.promptText('Alias (project-friendly name, optional):', model.alias || '')
+    // contextWindow
+    let newContextWindowRaw = await this.interactor.promptText(
+      'Context window (number of tokens):',
+      String(model.contextWindow)
+    )
+    let newContextWindow = parseInt(newContextWindowRaw, 10)
+    if (isNaN(newContextWindow) || newContextWindow <= 0) {
+      this.interactor.warn('Invalid value for context window. Keeping previous value.')
+      newContextWindow = model.contextWindow
+    }
+    // price (optional, object)
+    let price = model.price ? { ...model.price } : {}
+    for (const priceKey of ['inputMTokens', 'outputMTokens', 'cacheWrite', 'cacheRead']) {
+      const key = priceKey as keyof typeof price
+      let pricePrompt = await this.interactor.promptText(
+        `Price ${key} (per million tokens, optional):`,
+        price[key] !== undefined ? String(price[key]) : ''
+      )
+      if (pricePrompt && pricePrompt.trim()) {
+        const parsed = parseFloat(pricePrompt)
+        if (!isNaN(parsed)) price[key] = parsed
+        else this.interactor.warn(`Invalid number for price ${key}, keeping previous.`)
+      } else {
+        delete price[key]
+      }
+    }
+    if (Object.keys(price).length === 0) {
+      price = {}
+    }
+
+    // Construct updated model
+    const updatedModel: AiModel = {
+      ...model,
+      name: newName,
+      alias: newAlias || undefined,
+      contextWindow: newContextWindow,
+      price: price,
+    }
+
+    // Save
+    await this.services.aiConfig.saveModel(provider.name, updatedModel, level)
+    this.interactor.displayText(`✅ Model '${updatedModel.name}' updated for provider '${provider}' at ${level} level.`)
+    return context
+  }
+}
