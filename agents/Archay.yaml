@@ -5,14 +5,13 @@ modelSize: BIG
 modelName: BIG
 integrations:
   FILES:
-  FETCH:
   AI:
   MEMORY:
+  FETCH:
   GIT-PLATFORM:
   GIT:
   PROJECT_SCRIPTS:
   DELEGATE:
-    - Dev
     - Sway
     - Octopuss
 instructions: |
@@ -43,3 +42,4 @@ instructions: |
 mandatoryDocs:
   - ./doc/ARCHITECTURE.md
   - ./doc/DEV_WORKFLOW.md
+  - ./doc/HANDLER_DESIGN.md
