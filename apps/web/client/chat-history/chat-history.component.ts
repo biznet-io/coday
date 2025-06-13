@@ -8,6 +8,12 @@ import {
   ToolResponseEvent,
 } from '@coday/coday-events'
 import { CodayEventHandler } from '../utils/coday-event-handler'
+import { getPreference } from '../utils/preferences'
+import { VoiceSynthesisComponent } from '../voice-synthesis/voice-synthesis.component'
+
+const PARAGRAPH_MIN_LENGTH = 80
+const MAX_PARAGRAPHS = 3
+const MESSAGE_FRESHNESS_THRESHOLD = 5 * 60 * 1000 //  in millis
 
 export class ChatHistoryComponent implements CodayEventHandler {
   private chatHistory: HTMLDivElement
@@ -16,8 +22,12 @@ export class ChatHistoryComponent implements CodayEventHandler {
   private history = new Map<string, CodayEvent>()
   private thinkingTimeout: any
   private readonly onStopCallback: () => void
+  private readFullText: boolean = false
 
-  constructor(onStopCallback: () => void) {
+  constructor(
+    onStopCallback: () => void,
+    private readonly voiceSynthesis: VoiceSynthesisComponent
+  ) {
     this.chatHistory = document.getElementById('chat-history') as HTMLDivElement
     this.thinkingDots = document.getElementById('thinking-dots') as HTMLDivElement
     this.stopButton = this.thinkingDots.querySelector('.stop-button') as HTMLButtonElement
@@ -27,13 +37,23 @@ export class ChatHistoryComponent implements CodayEventHandler {
     if (this.stopButton) {
       this.stopButton.addEventListener('click', () => this.onStopCallback())
     }
+
+    // Load initial preference
+    this.readFullText = getPreference<boolean>('voiceReadFullText', false) || false
+
+    // Listen for preference changes
+    window.addEventListener('voiceReadFullTextChanged', (event: any) => {
+      this.readFullText = event.detail
+    })
   }
 
   handle(event: CodayEvent): void {
     this.history.set(event.timestamp, event)
     if (event instanceof TextEvent) {
       if (event.speaker) {
-        this.addText(event.text, event.speaker)
+        // Stop any current speech when new response arrives
+        this.voiceSynthesis.stopSpeech()
+        this.addText(event.text, event.speaker, event.timestamp)
       } else {
         this.addTechnical(event.text)
       }
@@ -83,9 +103,12 @@ export class ChatHistoryComponent implements CodayEventHandler {
     this.appendMessageElement(newEntry)
   }
 
-  addText(text: string, speaker: string | undefined): void {
+  addText(text: string, speaker: string | undefined, messageTimestamp?: string): void {
     const newEntry = this.createMessageElement(text, speaker)
     newEntry.classList.add('text', 'left')
+    newEntry.addEventListener('click', () => {
+      this.voiceSynthesis.stopSpeech()
+    })
 
     // Add copy button for agent responses
     const copyButtonContainer = document.createElement('div')
@@ -123,6 +146,11 @@ export class ChatHistoryComponent implements CodayEventHandler {
     newEntry.appendChild(copyButtonContainer)
 
     this.appendMessageElement(newEntry)
+
+    // Announce agent responses if enabled (and message is recent enough)
+    if (speaker && this.isVoiceAnnounceEnabled() && this.isMessageRecentEnoughForAnnouncement(messageTimestamp)) {
+      this.announceText(text)
+    }
   }
 
   addAnswer(answer: string, speaker: string | undefined): void {
@@ -291,5 +319,115 @@ export class ChatHistoryComponent implements CodayEventHandler {
 
     element.appendChild(container)
     this.appendMessageElement(element)
+  }
+
+  private isVoiceAnnounceEnabled(): boolean {
+    const isEnabled = getPreference<boolean>('voiceAnnounceEnabled', false) || false
+    console.log('[VOICE] isVoiceAnnounceEnabled from preferences:', isEnabled)
+    return isEnabled
+  }
+
+  private extractPlainText(markdown: string): string {
+    // Remove basic markdown formatting
+    return markdown
+      .replace(/\*\*(.*?)\*\*/g, '$1') // Bold
+      .replace(/\*(.*?)\*/g, '$1') // Italic
+      .replace(/`(.*?)`/g, '$1') // Code
+      .replace(/#{1,6}\s*(.*)/g, '$1') // Headers
+      .replace(/\[(.*?)\]\(.*?\)/g, '$1') // Links
+      .trim()
+  }
+
+  private getVoiceMode(): 'speech' | 'notification' {
+    const mode = (getPreference<string>('voiceMode', 'speech') as 'speech' | 'notification') || 'speech'
+    console.log('[VOICE] getVoiceMode from preferences:', mode)
+    return mode
+  }
+
+  private playNotificationSound(): void {
+    // Create a simple notification sound using Web Audio API or HTML5 Audio
+    try {
+      // Try to create a simple beep sound
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const oscillator = audioContext.createOscillator()
+      const gainNode = audioContext.createGain()
+
+      oscillator.connect(gainNode)
+      gainNode.connect(audioContext.destination)
+
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime) // 800Hz tone
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime) // Low volume
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1)
+
+      oscillator.start(audioContext.currentTime)
+      oscillator.stop(audioContext.currentTime + 0.1)
+    } catch (error) {
+      // Fallback: try to use a simple beep
+      console.log('\u0007') // Bell character (might work in some terminals)
+    }
+  }
+
+  private isMessageRecentEnoughForAnnouncement(messageTimestamp?: string): boolean {
+    if (!messageTimestamp) {
+      return true // If no timestamp, assume it's recent
+    }
+
+    try {
+      // Extract ISO date part before the random suffix
+      // Format: "2024-01-15T10:30:45.123Z-abc12" -> "2024-01-15T10:30:45.123Z"
+      const isoDatePart = messageTimestamp.split('-').slice(0, -1).join('-')
+
+      const messageTime = new Date(isoDatePart).getTime()
+      const now = Date.now()
+      const timeDiff = now - messageTime
+
+      return timeDiff <= MESSAGE_FRESHNESS_THRESHOLD
+    } catch (error) {
+      return true // If parsing fails, assume it's recent
+    }
+  }
+
+  private announceText(text: string): void {
+    const mode = this.getVoiceMode()
+
+    if (mode === 'notification') {
+      this.playNotificationSound()
+      return
+    }
+
+    let plainText = this.extractPlainText(text)
+
+    // Check if we should read full text or just the beginning
+    let textToSpeak: string
+
+    if (this.readFullText) {
+      // Read the entire text
+      textToSpeak = plainText
+    } else {
+      // Read only the first few paragraphs
+      const speech = plainText.split('\n').reduce(
+        (acc, value) => {
+          if (acc.paragraphs >= MAX_PARAGRAPHS) {
+            return acc
+          } else {
+            const paragraphIncrement = value.length > PARAGRAPH_MIN_LENGTH ? 1 : 0
+            return {
+              paragraphs: acc.paragraphs + paragraphIncrement,
+              text: acc.text + '\n' + value,
+            }
+          }
+        },
+        { paragraphs: 0, text: '' }
+      )
+      textToSpeak = speech.text
+    }
+
+    if (!textToSpeak.trim()) {
+      console.log('[VOICE] No text to speak after processing!')
+      return
+    }
+
+    // Use the voice synthesis component
+    this.voiceSynthesis.speak(textToSpeak)
   }
 }
