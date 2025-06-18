@@ -87,43 +87,79 @@ export class AiThread {
   }
 
   /**
-   * Returns a copy of all messages in the thread.
-   * @returns Array of thread messages in chronological order
+   * Returns a copy of all messages in the thread, truncated if they exceed maxChars.
+   * Prioritizes keeping the first user message (which contains the initial task/context) 
+   * and fills remaining space with the most recent messages.
+   * @param maxChars Maximum character limit for the returned messages
+   * @returns Array of thread messages that fit within the character limit
    */
   getMessages(maxChars?: number): ThreadMessage[] {
     if (!maxChars) return [...this.messages]
 
     const totalChars = this.messages.reduce((count, msg) => count + msg.length, 0)
-    if (totalChars < maxChars) return [...this.messages]
+    if (totalChars <= maxChars) return [...this.messages]
 
-    console.warn(`Truncating context, got ${totalChars} > ${maxChars} allowed chars.`)
-    // Then need to check if still under the limit
+    console.warn(`Truncating context: ${totalChars} chars > ${maxChars} limit`)
+    
+    // Strategy: Prioritize first user message + most recent messages
     const firstUserMessageIndex = this.messages.findIndex((msg) => msg instanceof MessageEvent && msg.role === 'user')
-    const limit = maxChars - this.messages[firstUserMessageIndex].length
-
-    let index = this.messages.length - 1
-    let lastAssistantAnswerIndex = this.messages.length - 1
-    let count = 0
-    while (count < limit && index > firstUserMessageIndex) {
-      const msg = this.messages[index]
-      // update the count
-      count += msg.length
-
-      if (count < limit && msg instanceof MessageEvent && msg.role === 'assistant') {
-        // track the oldest assistant response that fits in the context window
-        lastAssistantAnswerIndex = index
-      }
-
-      index--
+    const firstUserMessage = firstUserMessageIndex >= 0 ? this.messages[firstUserMessageIndex] : null
+    const firstUserMessageChars = firstUserMessage?.length || 0
+    
+    // Edge case: if first user message alone exceeds limit, return empty array
+    if (firstUserMessage && firstUserMessageChars > maxChars) {
+      console.warn(`Context truncated: first user message (${firstUserMessageChars} chars) exceeds limit (${maxChars} chars), excluding all messages`)
+      return []
     }
-
-    // truncate the messages to keep until firstUserMessage included, and from lastAssistantAnswerIndex up to the end
-    const truncated = [
-      ...this.messages.slice(0, firstUserMessageIndex + 1),
-      ...this.messages.slice(lastAssistantAnswerIndex),
-    ]
-
-    return truncated
+    
+    // If no first user message found, fall back to recent messages only
+    if (!firstUserMessage) {
+      let charCount = 0
+      let startIndex = this.messages.length
+      
+      for (let i = this.messages.length - 1; i >= 0; i--) {
+        const messageChars = this.messages[i].length
+        if (charCount + messageChars > maxChars) break
+        
+        charCount += messageChars
+        startIndex = i
+      }
+      
+      const recentMessages = this.messages.slice(startIndex)
+      const finalCharCount = recentMessages.reduce((count, msg) => count + msg.length, 0)
+      console.warn(`Context truncated: no first user message found, kept ${recentMessages.length} recent messages (${finalCharCount}/${maxChars} chars)`)
+      return recentMessages
+    }
+    
+    // Reserve space for first user message and find recent messages that fit in remaining space
+    const remainingBudget = maxChars - firstUserMessageChars
+    let recentCharCount = 0
+    let recentStartIndex = this.messages.length
+    
+    // Work backwards from the end, skipping the first user message if we encounter it
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      // Skip the first user message since we're including it separately
+      if (i === firstUserMessageIndex) continue
+      
+      const messageChars = this.messages[i].length
+      if (recentCharCount + messageChars > remainingBudget) break
+      
+      recentCharCount += messageChars
+      recentStartIndex = i
+    }
+    
+    // Get recent messages (excluding first user message)
+    const recentMessages = this.messages.slice(recentStartIndex).filter((_, index) => {
+      const actualIndex = recentStartIndex + index
+      return actualIndex !== firstUserMessageIndex
+    })
+    
+    // Combine first user message with recent messages
+    const result = [firstUserMessage, ...recentMessages]
+    const finalCharCount = result.reduce((count, msg) => count + msg.length, 0)
+    
+    console.warn(`Context truncated: kept first user message + ${recentMessages.length} recent messages (${finalCharCount}/${maxChars} chars)`)
+    return result
   }
 
   /**

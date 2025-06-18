@@ -95,8 +95,16 @@ export class AnthropicClient extends AiClient {
   ): Promise<void> {
     // Apply throttling delay if needed
     await this.applyThrottlingDelay()
+    
+    // Recalculate budget on each iteration to account for growing thread
     const initialContextCharLength = agent.systemInstructions.length + agent.tools.charLength + 20
-    const charBudget = model.contextWindow * this.charsPerToken - initialContextCharLength
+    const currentThreadCharLength = thread.getMessages().reduce((count, msg) => count + msg.length, 0)
+    const charBudget = model.contextWindow * this.charsPerToken - initialContextCharLength - currentThreadCharLength
+    
+    // Safety check: ensure we have positive budget
+    if (charBudget <= 0) {
+      throw new Error(`Context window exceeded: thread size (${currentThreadCharLength} chars) + context (${initialContextCharLength} chars) exceeds model capacity (${model.contextWindow * this.charsPerToken} chars)`)
+    }
 
     // API call with localized error handling
     let response: Anthropic.Messages.Message
@@ -122,9 +130,17 @@ export class AnthropicClient extends AiClient {
 
         this.interactor.displayText(`🔄 Retrying request...`)
 
-        // Retry the API call once
+        // Retry the API call once - recalculate budget for retry too
+        const retryCurrentThreadCharLength = thread.getMessages().reduce((count, msg) => count + msg.length, 0)
+        const retryCharBudget = model.contextWindow * this.charsPerToken - initialContextCharLength - retryCurrentThreadCharLength
+        
+        if (retryCharBudget <= 0) {
+          this.handleError(new Error(`Context window exceeded during retry: thread size (${retryCurrentThreadCharLength} chars) + context (${initialContextCharLength} chars) exceeds model capacity`), subscriber, this.name)
+          return
+        }
+        
         try {
-          const retryResult = await this.makeApiCall(client, model, agent, thread, charBudget)
+          const retryResult = await this.makeApiCall(client, model, agent, thread, retryCharBudget)
           response = retryResult.data
           httpResponse = retryResult.response
         } catch (retryError: any) {

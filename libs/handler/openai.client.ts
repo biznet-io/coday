@@ -149,8 +149,15 @@ export class OpenaiClient extends AiClient {
     subscriber: Subject<CodayEvent>
   ): Promise<void> {
     try {
+      // Recalculate budget on each iteration to account for growing thread
       const initialContextCharLength = agent.systemInstructions.length + agent.tools.charLength + 20
-      const charBudget = model.contextWindow * this.charsPerToken - initialContextCharLength
+      const currentThreadCharLength = thread.getMessages().reduce((count, msg) => count + msg.length, 0)
+      const charBudget = model.contextWindow * this.charsPerToken - initialContextCharLength - currentThreadCharLength
+      
+      // Safety check: ensure we have positive budget
+      if (charBudget <= 0) {
+        throw new Error(`Context window exceeded: thread size (${currentThreadCharLength} chars) + context (${initialContextCharLength} chars) exceeds model capacity (${model.contextWindow * this.charsPerToken} chars)`)
+      }
 
       const response = await client.chat.completions.create({
         model: model.name,
