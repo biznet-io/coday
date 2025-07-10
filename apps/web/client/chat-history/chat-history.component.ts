@@ -2,6 +2,7 @@ import {
   AnswerEvent,
   CodayEvent,
   ErrorEvent,
+  MessageEvent,
   TextEvent,
   ThinkingEvent,
   ToolRequestEvent,
@@ -56,7 +57,17 @@ export class ChatHistoryComponent implements CodayEventHandler {
 
   handle(event: CodayEvent): void {
     this.history.set(event.timestamp, event)
-    if (event instanceof TextEvent) {
+    if (event instanceof MessageEvent) {
+      // Handle rich content messages
+      if (event.role === 'user') {
+        this.addUserMessage(event)
+      } else {
+        // Stop any current speech when new response arrives and reset buttons
+        this.voiceSynthesis.stopSpeech()
+        this.resetAllPlayButtons()
+        this.addAssistantMessage(event)
+      }
+    } else if (event instanceof TextEvent) {
       if (event.speaker) {
         // Stop any current speech when new response arrives and reset buttons
         this.voiceSynthesis.stopSpeech()
@@ -295,6 +306,177 @@ export class ChatHistoryComponent implements CodayEventHandler {
       console.log('[CHAT] State inconsistency detected: no speech but button still active, fixing...')
       this.resetAllPlayButtons()
     }
+  }
+
+  private addUserMessage(event: MessageEvent): void {
+    const newEntry = this.createRichMessageElement(event)
+    newEntry.classList.add('text', 'right')
+
+    // Add button container
+    const buttonContainer = document.createElement('div')
+    buttonContainer.classList.add('message-button-container')
+
+    // Create play button for text content
+    const textContent = this.extractTextContent(event)
+    if (textContent) {
+      const playButton = this.createPlayButton(textContent)
+      buttonContainer.appendChild(playButton)
+    }
+
+    // Create copy button
+    const copyButton = document.createElement('button')
+    copyButton.classList.add('copy-button')
+    copyButton.title = 'Copy raw message'
+    copyButton.textContent = '📋'
+    copyButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      this.copyToClipboard(textContent)
+
+      const clickedButton = event.currentTarget as HTMLButtonElement
+      if (clickedButton) {
+        document.querySelectorAll('.copy-button.active').forEach((btn) => {
+          btn.classList.remove('active')
+          btn.textContent = '📋'
+        })
+
+        clickedButton.classList.add('active')
+        clickedButton.textContent = '✓'
+
+        setTimeout(() => {
+          clickedButton.classList.remove('active')
+          clickedButton.textContent = '📋'
+        }, 2000)
+      }
+    })
+
+    buttonContainer.appendChild(copyButton)
+    newEntry.appendChild(buttonContainer)
+
+    this.appendMessageElement(newEntry)
+  }
+
+  private addAssistantMessage(event: MessageEvent): void {
+    const newEntry = this.createRichMessageElement(event)
+    newEntry.classList.add('text', 'left')
+    newEntry.addEventListener('click', () => {
+      this.voiceSynthesis.stopSpeech()
+    })
+
+    // Add button container
+    const buttonContainer = document.createElement('div')
+    buttonContainer.classList.add('message-button-container')
+
+    // Create play button for text content
+    const textContent = this.extractTextContent(event)
+    if (textContent) {
+      const playButton = this.createPlayButton(textContent)
+      buttonContainer.appendChild(playButton)
+    }
+
+    // Create copy button
+    const copyButton = document.createElement('button')
+    copyButton.classList.add('copy-button')
+    copyButton.title = 'Copy raw response'
+    copyButton.textContent = '📋'
+    copyButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      this.copyToClipboard(textContent)
+
+      const clickedButton = event.currentTarget as HTMLButtonElement
+      if (clickedButton) {
+        document.querySelectorAll('.copy-button.active').forEach((btn) => {
+          btn.classList.remove('active')
+          btn.textContent = '📋'
+        })
+
+        clickedButton.classList.add('active')
+        clickedButton.textContent = '✓'
+
+        setTimeout(() => {
+          clickedButton.classList.remove('active')
+          clickedButton.textContent = '📋'
+        }, 2000)
+      }
+    })
+
+    buttonContainer.appendChild(copyButton)
+    newEntry.appendChild(buttonContainer)
+
+    this.appendMessageElement(newEntry)
+
+    // Announce if enabled and recent
+    const audioEnabled = getPreference<boolean>('voiceAnnounceEnabled', false) || false
+    if (audioEnabled && this.isMessageRecentEnoughForAnnouncement(event.timestamp)) {
+      this.announceText(textContent)
+    }
+  }
+
+  private createRichMessageElement(event: MessageEvent): HTMLDivElement {
+    const newEntry = document.createElement('div')
+    newEntry.classList.add('message')
+
+    // Add speaker
+    const speakerElement = document.createElement('div')
+    speakerElement.classList.add('speaker')
+    speakerElement.textContent = event.name
+    newEntry.appendChild(speakerElement)
+
+    // Create content container
+    const contentContainer = document.createElement('div')
+    contentContainer.classList.add('message-content')
+
+    // Render each content piece in order
+    event.content.forEach((content) => {
+      if (content.type === 'text') {
+        const textDiv = document.createElement('div')
+        textDiv.classList.add('text-part')
+        
+        const parsed = marked.parse(content.content)
+        if (parsed instanceof Promise) {
+          parsed.then((html) => {
+            textDiv.innerHTML = html
+          })
+        } else {
+          textDiv.innerHTML = parsed
+        }
+        
+        contentContainer.appendChild(textDiv)
+        
+      } else if (content.type === 'image') {
+        const img = document.createElement('img')
+        img.src = `data:${content.mimeType};base64,${content.content}`
+        img.alt = content.source || 'Image'
+        img.classList.add('message-image')
+        
+        // Simple styling
+        img.style.maxWidth = '100%'
+        img.style.height = 'auto'
+        img.style.margin = '8px 0'
+        img.style.borderRadius = '4px'
+        img.style.cursor = 'pointer'
+        
+        // Click to open
+        img.addEventListener('click', (e) => {
+          e.stopPropagation()
+          window.open(img.src, '_blank')
+        })
+        
+        contentContainer.appendChild(img)
+      }
+    })
+
+    newEntry.appendChild(contentContainer)
+    return newEntry
+  }
+
+  /**
+   * Extract all text content from a MessageEvent for voice synthesis and copying
+   */
+  private extractTextContent(event: MessageEvent): string {
+    return event.content
+      .filter(content => content.type === 'text')
+      .map(content => content.content)
+      .join('\n\n')
   }
 
   private createMessageElement(content: string, speaker: string | undefined): HTMLDivElement {
